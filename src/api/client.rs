@@ -209,6 +209,8 @@ pub struct PlayRequest {
     pub offset_uri: Option<String>,
     pub offset_position: Option<u32>,
     pub position_ms: u32,
+    /// Internal playback intent; not part of Spotify's request body.
+    pub ordered: bool,
 }
 
 impl PlayRequest {
@@ -1038,6 +1040,32 @@ impl ApiClient {
         .await
     }
 
+    /// Gather familiar tracks using one grant and its normal rate limits.
+    pub async fn taste_mix_sources(&self, liked: Option<Vec<Track>>) -> Result<Vec<Vec<Track>>> {
+        let mut sources = Vec::new();
+        for period in ["short_term", "medium_term", "long_term"] {
+            sources.push(self.top_tracks(period, 50, 0).await?.items);
+        }
+        let liked = if let Some(liked) = liked {
+            liked
+        } else {
+            let mut tracks = Vec::new();
+            let mut offset = 0;
+            loop {
+                let page = self.saved_tracks(offset, 50).await?;
+                let next = page.next_offset();
+                tracks.extend(page.items.into_iter().map(|saved| saved.track));
+                let Some(next) = next else {
+                    break;
+                };
+                offset = next;
+            }
+            tracks
+        };
+        sources.push(liked);
+        Ok(sources)
+    }
+
     pub async fn top_artists(&self, time_range: &str, limit: u32) -> Result<Page<Artist>> {
         self.get(
             "/me/top/artists",
@@ -1174,6 +1202,91 @@ impl ApiClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn taste_mix_reads_all_periods_and_saved_pages_or_reuses_the_library() {
+        use std::io::{BufRead, BufReader, Write};
+        for cached in [false, true] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = std::thread::spawn(move || {
+                let mut paths = Vec::new();
+                for index in 0..if cached { 3 } else { 5 } {
+                    let (mut socket, _) = listener.accept().unwrap();
+                    socket
+                        .set_read_timeout(Some(Duration::from_secs(5)))
+                        .unwrap();
+                    let mut reader = BufReader::new(&socket);
+                    let mut path = String::new();
+                    reader.read_line(&mut path).unwrap();
+                    paths.push(path);
+                    loop {
+                        let mut line = String::new();
+                        reader.read_line(&mut line).unwrap();
+                        if line == "\r\n" {
+                            break;
+                        }
+                    }
+                    let body = if index < 3 {
+                        serde_json::json!({"items": [{"uri": format!("spotify:track:top{index}")}]})
+                    } else {
+                        serde_json::json!({"items": [{"track": {"uri": format!("spotify:track:liked{index}")}}], "limit": 50, "next": if index == 3 { Some("more") } else { None }})
+                    }.to_string();
+                    write!(socket, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
+                }
+                paths
+            });
+            let http = reqwest::Client::new();
+            let mut client = ApiClient::new(
+                http.clone(),
+                Arc::new(NetActivity::default()),
+                20,
+                50,
+                ApiSource::Personal,
+            );
+            client.base_url = Some(format!("http://{address}"));
+            let dirs = crate::paths::AppDirs {
+                config: std::env::temp_dir().join("mix-token/config"),
+                state: std::env::temp_dir().join("mix-token/state"),
+                cache: std::env::temp_dir().join("mix-token/cache"),
+            };
+            client.set_token_provider(Some(TokenProvider::Web(WebTokens::new(
+                http,
+                crate::auth::StoredToken {
+                    access_token: "test-only".into(),
+                    expires_at: u64::MAX,
+                    ..Default::default()
+                },
+                crate::credentials::Store::in_memory(dirs)
+                    .lease(crate::credentials::Slot::Personal),
+                ApiSource::Personal,
+                Arc::new(|_| {}),
+            ))));
+            let liked = cached.then(|| {
+                vec![Track {
+                    uri: "spotify:track:cached".into(),
+                    ..Default::default()
+                }]
+            });
+            let sources = client.taste_mix_sources(liked).await.unwrap();
+            assert_eq!(sources.len(), 4);
+            assert_eq!(sources[3].len(), if cached { 1 } else { 2 });
+            let paths = server.join().unwrap();
+            for (path, period) in
+                paths
+                    .iter()
+                    .take(3)
+                    .zip(["short_term", "medium_term", "long_term"])
+            {
+                assert!(path.starts_with("GET /me/top/tracks?"));
+                assert!(path.contains(&format!("time_range={period}")));
+            }
+            if !cached {
+                assert!(paths[3].contains("offset=0"));
+                assert!(paths[4].contains("offset=50"));
+            }
+        }
+    }
 
     #[tokio::test]
     async fn revoked_provider_cannot_return_or_persist_its_token() {

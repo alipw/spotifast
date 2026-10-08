@@ -543,6 +543,7 @@ fn view_context(base: &RowContext, view_uris: Option<&Arc<[String]>>) -> RowCont
                 context_uri: uri.clone(),
                 editable_playlist: editable_playlist.clone(),
             },
+            RowContext::OrderedUris(_) => RowContext::OrderedUris(Arc::clone(uris)),
             _ => RowContext::Uris(Arc::clone(uris)),
         }
     } else {
@@ -1086,7 +1087,11 @@ fn sort_by_text_key(visible: &mut [usize], ascending: bool, key: impl Fn(usize) 
 
 /// The indices of `items` as a view presents them: filtered by `needle`
 /// (already lowercased), then ordered by `sort`.
-fn view_indices(items: &[TableItem], needle: &str, sort: Option<TableSort>) -> Vec<usize> {
+pub(crate) fn view_indices(
+    items: &[TableItem],
+    needle: &str,
+    sort: Option<TableSort>,
+) -> Vec<usize> {
     let mut visible: Vec<usize> = items
         .iter()
         .enumerate()

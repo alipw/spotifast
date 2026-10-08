@@ -49,6 +49,22 @@ https://github.com/user-attachments/assets/a5f669ce-b3b7-4f8e-9933-976a78876c7e
 | **Winamp mini player** | Use classic skins with an equalizer, playlist, and animated sound displays. |
 | **MilkDrop** | Watch music-reactive visuals in a separate window or full screen. See platform availability below. |
 
+## Personal mix
+
+This fork adds **Mix my taste** on Home. Preview up to 50 familiar songs drawn
+from short-, medium- and long-term favorites, Liked Songs and local play history.
+The mix balances artists and avoids adjacent repeats when possible. Play follows
+the displayed order with Shuffle off; Regenerate makes another selection, and
+Save playlist creates a private Spotify playlist.
+
+Close any running installed copy, then launch this fork from its checkout:
+
+```bash
+cargo run --locked --no-default-features -j 4
+```
+
+This build omits the optional MilkDrop visualizer.
+
 ## Install
 
 | Platform | Installation |

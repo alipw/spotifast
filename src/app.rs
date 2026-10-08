@@ -343,6 +343,7 @@ pub struct App {
     liked_songs: crate::liked::LikedSongs,
     liked_recheck_at: Option<Instant>,
     pub home: HomeData,
+    pub taste_mix: crate::mix::TasteMix,
     /// Local play history. See [`crate::history`].
     pub plays: crate::history::History,
     /// Current track timing used to decide when a play counts.
@@ -814,6 +815,7 @@ impl App {
             liked_songs: crate::liked::LikedSongs::default(),
             liked_recheck_at: None,
             home: HomeData::default(),
+            taste_mix: crate::mix::TasteMix::default(),
             plays,
             listening: None,
             recents: crate::model::CursorList::default(),
@@ -2122,6 +2124,7 @@ impl App {
         self.liked_songs = crate::liked::LikedSongs::default();
         self.liked_recheck_at = None;
         self.home = HomeData::default();
+        self.taste_mix = crate::mix::TasteMix::default();
         self.playlist_pages.clear();
         self.album_pages.clear();
         self.artist_pages.clear();
@@ -3622,6 +3625,7 @@ impl App {
         match page {
             Page::Home => self.load_home(false),
             Page::TopSongs => self.load_top_songs(false),
+            Page::TasteMix => self.load_taste_mix(),
             Page::Search => {}
             Page::LikedSongs => self.ensure_liked_songs(),
             Page::Albums => {
@@ -4113,6 +4117,10 @@ impl App {
         match &page {
             Page::Home => self.load_home(true),
             Page::TopSongs => self.load_top_songs(true),
+            Page::TasteMix => {
+                self.taste_mix.songs = Loadable::NotLoaded;
+                self.load_taste_mix();
+            }
             Page::LikedSongs => {
                 self.refresh_liked_songs();
                 return;
@@ -5120,6 +5128,9 @@ impl App {
                 {
                     self.home.top_tracks = Loadable::Failed(error.to_string());
                 }
+            }
+            ApiResponse::TasteMixSources { generation, result } => {
+                self.receive_taste_mix(generation, result);
             }
             ApiResponse::TopArtists { generation, result } => {
                 if generation != self.home.generation {
@@ -6736,7 +6747,16 @@ impl App {
             self.shuffle_set_at = Some(Instant::now());
             self.queue_recheck_at = Some(Instant::now() + QUEUE_RECHECK);
         }
-        let shuffle = shuffle_first || self.shuffle_wanted;
+        if request.ordered {
+            self.shuffle_wanted = false;
+            self.shuffle_set_at = Some(Instant::now());
+            self.local.shuffle = false;
+            if let Some(remote) = &mut self.remote {
+                remote.state.shuffle_state = false;
+            }
+            self.session_dirty = true;
+        }
+        let shuffle = !request.ordered && (shuffle_first || self.shuffle_wanted);
         if request.offset_uri.is_none()
             && request.offset_position.is_none()
             && request.uris.is_empty()
@@ -6810,7 +6830,12 @@ impl App {
             }
             Target::Remote(Some(device_id)) => {
                 self.queued_play = None;
-                if shuffle {
+                if request.ordered {
+                    self.backend.api(ApiRequest::OrderedPlay {
+                        device_id: Some(device_id),
+                        play: request,
+                    });
+                } else if shuffle {
                     self.backend.api(ApiRequest::ShufflePlay {
                         device_id: Some(device_id),
                         play: request,
@@ -8288,6 +8313,11 @@ impl App {
                 request.offset_position = offset_index;
                 self.play_request(request, false);
             }
+            Action::PlayTasteMix => {
+                self.play_ordered_uris(self.taste_mix_uris(), 0);
+            }
+            Action::RegenerateTasteMix => self.regenerate_taste_mix(),
+            Action::SaveTasteMix => self.save_taste_mix(),
             Action::PlayUris { uris, index } => {
                 if uris.is_empty() {
                     return;
@@ -8334,6 +8364,9 @@ impl App {
                     let (uris, index) = cap_uris(uris.as_ref(), index);
                     let request = PlayRequest::tracks(uris).starting_at_index(index);
                     self.play_request(request, false);
+                }
+                RowContext::OrderedUris(uris) => {
+                    self.play_ordered_uris(uris.to_vec(), index);
                 }
                 RowContext::Queue => self.play_queue_item(index as usize, uri),
                 RowContext::View {
@@ -10339,6 +10372,7 @@ fn local_load(request: &PlayRequest, shuffle: bool) -> LoadSpec {
     if single_song {
         return LoadSpec {
             context_uri: Some(request.uris[0].clone()),
+            shuffle: request.ordered.then_some(false),
             position_ms: request.position_ms,
             play: true,
             ..LoadSpec::default()
@@ -10358,7 +10392,11 @@ fn local_load(request: &PlayRequest, shuffle: bool) -> LoadSpec {
         offset_index: request.offset_position,
         position_ms: request.position_ms,
         play: true,
-        shuffle: (shuffle && !(list && chosen)).then_some(true),
+        shuffle: if request.ordered {
+            Some(false)
+        } else {
+            (shuffle && !(list && chosen)).then_some(true)
+        },
         repeat: None,
         autoplay: false,
     }
@@ -10452,6 +10490,7 @@ fn cover_error(locale: Locale, error: &crate::api::client::ApiError) -> String {
 }
 
 mod radio;
+mod taste_mix;
 
 #[cfg(test)]
 mod tests {
@@ -10461,6 +10500,114 @@ mod tests {
     use crate::api::models::{
         Episode, Image, Page as ApiPage, ResumePoint, SavedEpisode, SavedTrack, SearchResults,
     };
+
+    #[test]
+    fn taste_mix_ignores_old_results_and_includes_local_history() {
+        let mut app = headless_app();
+        app.taste_mix.generation = 7;
+        app.taste_mix.songs = Loadable::Loading;
+        let local = Track {
+            id: Some("local-history".into()),
+            uri: "spotify:track:local-history".into(),
+            ..Default::default()
+        };
+        app.plays.record(local, jiff::Timestamp::now());
+        app.receive_taste_mix(6, Ok(vec![vec![]]));
+        assert!(matches!(app.taste_mix.songs, Loadable::Loading));
+        app.receive_taste_mix(7, Ok(vec![vec![]]));
+        assert_eq!(
+            app.taste_mix.songs.get().unwrap()[0].uri,
+            "spotify:track:local-history"
+        );
+        app.reset_data();
+        app.receive_taste_mix(7, Ok(vec![vec![]]));
+        assert!(matches!(app.taste_mix.songs, Loadable::NotLoaded));
+        assert!(app.taste_mix.sources.is_empty());
+    }
+
+    #[test]
+    fn taste_mix_saves_the_preview_as_a_private_playlist() {
+        let mut app = headless_app();
+        app.taste_mix.songs = Loadable::Loaded(vec![Track {
+            uri: "spotify:track:favorite".into(),
+            ..Default::default()
+        }]);
+        app.save_taste_mix();
+        assert!(
+            matches!(app.actions.as_slice(), [Action::CreatePlaylist { public: false, add_uris, .. }] if add_uris == &["spotify:track:favorite"])
+        );
+    }
+
+    #[test]
+    fn taste_mix_play_and_save_follow_the_sorted_preview() {
+        let mut app = headless_app();
+        app.taste_mix.songs = Loadable::Loaded(vec![
+            Track {
+                name: "Z".into(),
+                uri: "spotify:track:z".into(),
+                ..Default::default()
+            },
+            Track {
+                name: "A".into(),
+                uri: "spotify:track:a".into(),
+                ..Default::default()
+            },
+        ]);
+        app.table_sorts.insert(
+            Page::TasteMix,
+            TableSort {
+                column: SortColumn::Title,
+                ascending: true,
+            },
+        );
+        assert_eq!(app.taste_mix_uris(), ["spotify:track:a", "spotify:track:z"]);
+        app.save_taste_mix();
+        assert!(
+            matches!(app.actions.as_slice(), [Action::CreatePlaylist { add_uris, .. }] if add_uris == &["spotify:track:a", "spotify:track:z"])
+        );
+    }
+
+    #[test]
+    fn taste_mix_loads_locally_in_order_even_with_shuffle_on() {
+        let mut app = headless_app();
+        app.shuffle_wanted = true;
+        let mut request =
+            PlayRequest::tracks(vec!["spotify:track:a".into(), "spotify:track:b".into()])
+                .starting_at_index(1);
+        request.ordered = true;
+        let load = local_load(&request, true);
+        assert_eq!(load.shuffle, Some(false));
+        assert_eq!(load.offset_index, Some(1));
+        app.play_request(request, false);
+        assert!(!app.shuffle_wanted);
+    }
+
+    #[test]
+    fn taste_mix_disables_remote_shuffle_in_the_same_play_request() {
+        let mut app = headless_app();
+        app.local.connected = false;
+        app.remote = Some(RemoteSnapshot {
+            state: PlaybackState {
+                device: Some(Device {
+                    id: Some("phone".into()),
+                    is_active: true,
+                    ..Default::default()
+                }),
+                shuffle_state: true,
+                is_playing: true,
+                ..Default::default()
+            },
+            received_at: Instant::now(),
+        });
+        app.shuffle_wanted = true;
+        app.play_ordered_uris(vec!["spotify:track:a".into(), "spotify:track:b".into()], 0);
+        let requests = app.backend.take_remote_play_requests();
+        assert!(
+            matches!(requests.as_slice(), [ApiRequest::OrderedPlay { device_id: Some(device), play }] if device == "phone" && play.ordered && play.uris == ["spotify:track:a", "spotify:track:b"])
+        );
+        assert!(app.backend.take_remote_shuffle_requests().is_empty());
+        assert!(!app.shuffle_wanted);
+    }
 
     /// #623: the missing-output message the sink reports is the one the
     /// catalogues translate.

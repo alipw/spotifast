@@ -23,6 +23,10 @@ Starting and resuming are separate actions. With Shuffle off, a playlist's
 Double-clicking a row starts there, including with Shuffle on. **Play** in
 the player bar resumes the current song at its paused position.
 
+**Mix my taste** plays its preview in order and turns Shuffle off when Play
+or a song row is selected. Songs already added to Playing next keep their
+normal priority.
+
 Since 0.10.0, the Shuffle button on a collection page changes the
 global playback mode without starting that collection. It can be selected
 before a playback device is active; the next **Play** uses the selection.

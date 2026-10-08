@@ -127,6 +127,10 @@ pub enum ApiRequest {
         full: bool,
         generation: u64,
     },
+    TasteMixSources {
+        generation: u64,
+        liked: Option<Vec<Track>>,
+    },
     TopArtists {
         generation: u64,
     },
@@ -305,6 +309,10 @@ pub enum ApiRequest {
         device_id: Option<String>,
         play: PlayRequest,
     },
+    OrderedPlay {
+        device_id: Option<String>,
+        play: PlayRequest,
+    },
     AddToQueue {
         uri: String,
         device_id: Option<String>,
@@ -357,6 +365,10 @@ pub enum ApiResponse {
         full: bool,
         generation: u64,
         result: ApiResult<Page<Track>>,
+    },
+    TasteMixSources {
+        generation: u64,
+        result: ApiResult<Vec<Vec<Track>>>,
     },
     TopArtists {
         generation: u64,
@@ -1052,6 +1064,7 @@ impl Backend {
                 action: RemoteAction::Play,
                 ..
             } | ApiRequest::ShufflePlay { .. }
+                | ApiRequest::OrderedPlay { .. }
         ) {
             self.remote_play_requests
                 .lock()
@@ -3335,10 +3348,12 @@ fn operation_for(api: &ApiGateway, request: &ApiRequest) -> Operation {
         | ApiRequest::Remote { .. }
         | ApiRequest::Transfer { .. }
         | ApiRequest::ShufflePlay { .. }
+        | ApiRequest::OrderedPlay { .. }
         | ApiRequest::AddToQueue { .. }
         | ApiRequest::AddManyToQueue { .. } => Operation::Playback,
         ApiRequest::RecentlyPlayed { .. }
         | ApiRequest::TopTracks { .. }
+        | ApiRequest::TasteMixSources { .. }
         | ApiRequest::TopArtists { .. }
         | ApiRequest::SavedTracks { .. }
         | ApiRequest::SavedAlbums { .. }
@@ -3517,6 +3532,10 @@ async fn handle(
             offset,
             full,
             generation,
+        },
+        ApiRequest::TasteMixSources { generation, liked } => ApiResponse::TasteMixSources {
+            generation,
+            result: routed!(taste_mix_sources(liked)),
         },
         ApiRequest::TopArtists { generation } => ApiResponse::TopArtists {
             generation,
@@ -3830,6 +3849,17 @@ async fn handle(
         ApiRequest::ShufflePlay { device_id, play } => {
             let device = device_id.as_deref();
             let result = match routed!(set_shuffle(true, device)) {
+                Ok(()) => routed!(play(device, Some(&play))),
+                Err(error) => Err(error),
+            };
+            ApiResponse::Remote {
+                action: RemoteAction::Play,
+                result,
+            }
+        }
+        ApiRequest::OrderedPlay { device_id, play } => {
+            let device = device_id.as_deref();
+            let result = match routed!(set_shuffle(false, device)) {
                 Ok(()) => routed!(play(device, Some(&play))),
                 Err(error) => Err(error),
             };

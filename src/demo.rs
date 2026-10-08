@@ -519,6 +519,13 @@ pub fn populate(app: &mut App) {
     app.home.podcasts_generation = app.home.generation;
     app.home.top_artists = Loadable::Loaded((0..8).map(artist).collect());
     app.home.top_tracks = Loadable::Loaded(tracks.iter().skip(10).take(10).cloned().collect());
+    app.taste_mix.sources = vec![tracks.clone()];
+    app.taste_mix.songs = Loadable::Loaded(crate::mix::generate(
+        &app.taste_mix.sources,
+        crate::mix::MIX_SIZE,
+        &mut <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(42),
+    ));
+    app.taste_mix.generation = 1;
     app.home.top_songs = Loadable::Loaded(tracks.iter().skip(10).cloned().collect());
     app.home.top_songs_complete = true;
     app.home.recommendations = Loadable::Loaded(tracks.iter().skip(20).take(10).cloned().collect());
@@ -869,6 +876,11 @@ pub fn apply_flags(app: &mut App, page: Option<&str>, show: Option<&str>) {
                 if surface == "lyrics-no-playback" {
                     app.remote = None;
                 }
+            }
+            "taste-mix-loading" => app.taste_mix.songs = Loadable::Loading,
+            "taste-mix-empty" => app.taste_mix.songs = Loadable::Loaded(Vec::new()),
+            "taste-mix-error" => {
+                app.taste_mix.songs = Loadable::Failed("Connection interrupted".into())
             }
             "devices" => app.show_devices = true,
             // These paired states capture both outcomes of the collection
@@ -2047,6 +2059,55 @@ mod tests {
         assert_eq!(restored.library_sort, app.settings.library_sort);
         assert_eq!(restored.sidebar_order, saved);
         app.backend.shutdown();
+    }
+
+    #[test]
+    fn taste_mix_preview_renders_and_its_buttons_emit_actions() {
+        let (ctx, mut app) = accessible_app("taste-mix-buttons");
+        let view = crate::ui::taste_mix::show;
+        view_frame(&ctx, &mut app, vec![], view);
+        let painted = view_frame(&ctx, &mut app, vec![], view);
+        for label in ["Mix my taste", "Play", "Regenerate", "Save playlist"] {
+            assert!(
+                painted.iter().any(|(text, _)| text == label),
+                "missing {label}"
+            );
+        }
+        for label in ["Play", "Regenerate", "Save playlist"] {
+            app.actions.clear();
+            let pos = painted
+                .iter()
+                .find(|(text, _)| text == label)
+                .unwrap()
+                .1
+                .center();
+            view_frame(
+                &ctx,
+                &mut app,
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed: true,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed: false,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+                view,
+            );
+            assert!(matches!(
+                (label, app.actions.as_slice()),
+                ("Play", [Action::PlayTasteMix])
+                    | ("Regenerate", [Action::RegenerateTasteMix])
+                    | ("Save playlist", [Action::SaveTasteMix])
+            ));
+        }
     }
 
     /// Home's podcast shelf uses the ordinary cards, leaves out audiobooks
@@ -6234,6 +6295,7 @@ mod tests {
         let pages = [
             Page::Home,
             Page::TopSongs,
+            Page::TasteMix,
             Page::Search,
             Page::LikedSongs,
             Page::Albums,

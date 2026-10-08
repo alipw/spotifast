@@ -388,3 +388,19 @@ On startup, network work waits for the protected proxy password to be restored.
 That lookup runs on the credential worker and does not block the interface or
 shutdown. The password belongs to its host, port, and username; editing any of
 these fields clears it. See [password storage and migration](/settings-and-files/).
+
+## Personal mix
+
+Opening **Mix my taste** requests up to 50 top tracks for each of short-,
+medium- and long-term listening through the existing UserData routing. It reuses
+Liked Songs if fully loaded, otherwise it reads saved-track pages of 50 in
+sequence. These reads retain the normal Spotify rate limits and sign-out
+cancellation. A failed read offers Retry instead of presenting a partial mix.
+The source pool stays in memory for the app session; Regenerate adds no requests.
+Local history is included without a network read. No recommendation endpoint,
+audio analysis, extra permission or external service is used.
+
+On another device, mix playback first disables Shuffle and then starts the
+explicit song list, in one sequential backend operation. On this computer,
+the player loads the list with Shuffle off. Neither path clears manually queued
+songs. Saving uses the existing private-playlist creation path.

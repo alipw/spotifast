@@ -18,6 +18,7 @@ pub mod search;
 pub mod settings;
 pub mod show;
 pub mod sidebar;
+pub mod taste_mix;
 pub mod topbar;
 mod update;
 pub mod widgets;
@@ -299,6 +300,7 @@ fn central(app: &mut App, ui: &mut egui::Ui) {
                             match page {
                                 Page::Home => home::show(app, ui),
                                 Page::TopSongs => collection::top_songs(app, ui),
+                                Page::TasteMix => taste_mix::show(app, ui),
                                 Page::Search => search::show(app, ui),
                                 Page::LikedSongs => collection::liked(app, ui),
                                 Page::Albums | Page::Artists | Page::Podcasts | Page::Episodes => {

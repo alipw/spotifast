@@ -110,6 +110,7 @@ fn episode_retained_bytes(episode: &Episode) -> usize {
 pub enum Page {
     Home,
     TopSongs,
+    TasteMix,
     Search,
     LikedSongs,
     Albums,
@@ -132,6 +133,7 @@ impl Page {
         match self {
             Page::Home => "home".into(),
             Page::TopSongs => "top-songs".into(),
+            Page::TasteMix => "taste-mix".into(),
             Page::Search => "search".into(),
             Page::LikedSongs => "liked".into(),
             Page::Albums => "albums".into(),
@@ -152,6 +154,7 @@ impl Page {
         Some(match text {
             "home" => Page::Home,
             "top-songs" => Page::TopSongs,
+            "taste-mix" => Page::TasteMix,
             "search" => Page::Search,
             "liked" => Page::LikedSongs,
             "albums" => Page::Albums,
@@ -822,6 +825,8 @@ pub enum RowContext {
     },
     /// A loose list of tracks, played as a queue of URIs.
     Uris(Arc<[String]>),
+    /// A generated list whose order must survive the current shuffle mode.
+    OrderedUris(Arc<[String]>),
     /// A Next up row. Playing it consumes that row and all rows before it.
     Queue,
     /// A sorted or filtered context view that plays the displayed rows.
@@ -949,6 +954,9 @@ pub enum Action {
         uris: Vec<String>,
         index: u32,
     },
+    PlayTasteMix,
+    RegenerateTasteMix,
+    SaveTasteMix,
     PlayFromRow {
         context: RowContext,
         uri: String,

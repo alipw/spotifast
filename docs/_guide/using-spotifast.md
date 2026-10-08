@@ -5,6 +5,23 @@ description: Play music, arrange playlists, find lyrics, and make Spotifast your
 nav_order: 3
 ---
 
+## Mix my taste
+
+Choose **Mix my taste** on Home to preview up to 50 songs from your favorites
+across Spotify's three listening periods, Liked Songs and local history. Artists
+are balanced across the selection, and adjacent repeats are avoided whenever
+another artist remains. This selects familiar songs, rather than discovering
+new music or guaranteeing a particular genre balance.
+
+**Play** and double-clicking a song turn Shuffle off and follow the displayed
+order. Manually queued songs retain the normal queue behavior. **Regenerate**
+uses the same source pool without more Spotify requests. **Save playlist**
+creates a private playlist of the songs shown. Sources are kept only for the
+current app session; reopening the app collects fresh data.
+
+The local history contains at most 500 plays. Spotify's top-track periods are
+summaries of listening affinity, not a complete lifetime listening history.
+
 ## Middle-click autoscroll
 
 On Windows, since 0.8.0, and on Linux once turned on, middle-click a scrolling
